@@ -85,10 +85,15 @@ impl fmt::Display for ImmediateValue {
     }
 }
 
+struct LabelOffset {
+    label: Label,
+    rel: Amd64Register
+}
+
 enum Amd64Operand {
     Register(Amd64Register),
     Immediate(ImmediateValue),
-    LabelOffset(Amd64LabelOffset),
+    DataRef(LabelOffset),
 }
 
 impl fmt::Display for Amd64Operand {
@@ -96,7 +101,7 @@ impl fmt::Display for Amd64Operand {
         match self {
             Amd64Operand::Register(reg) => write!(f, "{}", reg),
             Amd64Operand::Immediate(imm) => write!(f, "{}", imm),
-            Amd64Operand::LabelOffset(mem) => write!(f, "{}", mem),
+            Amd64Operand::DataRef(r) => write!(f, "{}({})", r.label.label, r.rel),
         }
     }
 }
@@ -334,10 +339,11 @@ fn main() {
             AsmExpr::Instruction(Amd64Instruction::new(
                 "lea",
                 vec![
-                    Amd64Operand::Immediate(ImmediateValue::Label(Label::hashed(
-                        "helloWorldStr",
-                    ))),
-                    Amd64Operand::Register(Amd64Register::Special(SpecialRegister::RSI)),
+                    Amd64Operand::DataRef(LabelOffset { 
+                        label: Label::hashed("helloWorldStr"),
+                        rel: Amd64Register::Special(SpecialRegister::RIP)
+                    }),
+                    Amd64Operand::Register(Amd64Register::Special(SpecialRegister::RSI))
                 ],
             )),
             AsmExpr::Instruction(Amd64Instruction::new(
