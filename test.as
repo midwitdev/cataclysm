@@ -1,15 +1,17 @@
 .global _start
-_start:
-	mov	$1, %rax
-	mov	$1, %rdi
-	mov	$L_8b785f225f7f0d83, %rsi
-	add	$8, %rsi
-	mov	$21, %rdx
-	syscall
-	mov	$60, %rax
-	xor	%rdi, %rdi
-	syscall
+.section .text
+	_start:
+		mov	$1, %rax
+		mov	$1, %rdi
+		lea	L_5c911ff473bdf180(%rip), %rsi
+		mov	L_b6e839f855c0f9c2, %rdx
+		syscall
+		mov	$60, %rax
+		xor	%rdi, %rdi
+		syscall
 
-L_8b785f225f7f0d83:
-	.quad 21
-	.byte 0xE3, 0x81, 0x93, 0xE3, 0x82, 0x93, 0xE3, 0x81, 0xAB, 0xE3, 0x81, 0xA1, 0xE3, 0x81, 0xAF, 0xE4, 0xB8, 0x96, 0xE7, 0x95, 0x8C
+.section .data
+	L_5c911ff473bdf180:
+		.byte 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x77, 0x6F, 0x72, 0x6C, 0x64, 0x21
+	L_b6e839f855c0f9c2:
+		.quad 13

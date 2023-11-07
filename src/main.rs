@@ -1,6 +1,6 @@
 use std::{
     collections::{hash_map::DefaultHasher, HashMap},
-    fmt::{self},
+    fmt::{self, write},
     hash::{self, Hash, Hasher},
     string,
 };
@@ -10,13 +10,13 @@ struct Label {
 }
 
 struct Global {
-    value: String
+    value: String,
 }
 
 impl Label {
     fn plain(label: &str) -> Self {
         Label {
-            label: label.to_string()
+            label: label.to_string(),
         }
     }
 
@@ -26,7 +26,7 @@ impl Label {
         let hash = hasher.finish();
 
         Label {
-            label: format!("L_{:x}", hash)
+            label: format!("L_{:x}", hash),
         }
     }
 }
@@ -34,14 +34,14 @@ impl Label {
 impl Global {
     fn new(value: &str) -> Self {
         Global {
-            value: value.to_string()
+            value: value.to_string(),
         }
     }
 }
 
 impl fmt::Display for Label {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.label)
+        write!(f, "{}:", self.label)
     }
 }
 
@@ -67,11 +67,11 @@ enum ImmediateValue {
 impl fmt::Display for ImmediateValue {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            ImmediateValue::U64(n) => write!(f, "{}", n),
-            ImmediateValue::I64(n) => write!(f, "{}", n),
-            ImmediateValue::USize(n) => write!(f, "{}", n),
+            ImmediateValue::U64(n) => write!(f, "${}", n),
+            ImmediateValue::I64(n) => write!(f, "${}", n),
+            ImmediateValue::USize(n) => write!(f, "${}", n),
             ImmediateValue::Label(s) => {
-                write!(f,"{}", s.label)
+                write!(f, "{}", s.label)
             }
             ImmediateValue::Bytes(b) => {
                 let formatted_bytes: String = b
@@ -95,7 +95,7 @@ impl fmt::Display for Amd64Operand {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Amd64Operand::Register(reg) => write!(f, "{}", reg),
-            Amd64Operand::Immediate(imm) => write!(f, "${}", imm),
+            Amd64Operand::Immediate(imm) => write!(f, "{}", imm),
             Amd64Operand::LabelOffset(mem) => write!(f, "{}", mem),
         }
     }
@@ -140,7 +140,6 @@ impl fmt::Display for Amd64Register {
     }
 }
 
-
 struct Amd64MemoryAccess {
     base_register: Amd64Register,
     displacement: i64,
@@ -151,13 +150,17 @@ struct Amd64MemoryAccess {
 struct Amd64LabelOffset {
     label: ImmediateValue,
     offset: i64,
-    dest_register: Amd64Register
+    dest_register: Amd64Register,
 }
 
 impl fmt::Display for Amd64LabelOffset {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         //8(L_8b785f225f7f0d83)(%rip), %rsi
-        write!(f, "{}({})(%rip), {}", self.offset, self.label, self.dest_register)
+        write!(
+            f,
+            "{}({})(%rip), {}",
+            self.offset, self.label, self.dest_register
+        )
     }
 }
 
@@ -207,20 +210,58 @@ impl fmt::Display for Amd64Instruction {
     }
 }
 
-enum AsmExpr {
-    Instruction(Amd64Instruction),
-    Label(Label)
+enum Data {
+    Int(i64),
+    UInt(u64),
+    USize(usize),
+    Float(f64),
+    Bytes(Vec<u8>)
 }
 
-impl fmt::Display for AsmExpr {
+enum AsmExpr {
+    Data(Data),
+    Instruction(Amd64Instruction),
+    Block(Vec<AsmExpr>),
+    Label(Label),
+    Raw(String),
+}
+
+impl fmt::Display for Data {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            AsmExpr::Instruction(inst) => write!(f, "{}", inst),
-            AsmExpr::Label(lbl) => write!(f, "{}", lbl),
+            Data::Float(v) => write!(f, ".quad {}", v),
+            Data::Int(v) => write!(f, ".quad {}", v),
+            Data::UInt(v) => write!(f, ".quad {}", v),
+            Data::USize(v) => write!(f, ".quad {}", v),
+            Data::Bytes(v) => {
+                let formatted_bytes = v
+                    .iter()
+                    .map(|&byte| format!("0x{:02X}", byte))
+                    .collect::<Vec<String>>()
+                    .join(", ");
+                write!(f, ".byte {}", formatted_bytes)
+            },
         }
     }
 }
 
+
+impl fmt::Display for AsmExpr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            AsmExpr::Data(data) => write!(f, "\t\t{}", data),
+            AsmExpr::Instruction(inst) => write!(f, "\t\t{}", inst),
+            AsmExpr::Label(lbl) => write!(f, "\t{}", lbl),
+            AsmExpr::Raw(str) => write!(f, "{}", str),
+            AsmExpr::Block(lines) => {
+                for line in lines {
+                    write!(f, "{}\n", line)?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
 struct Section {
     name: String,
     body: Vec<AsmExpr>,
@@ -228,15 +269,11 @@ struct Section {
 
 impl fmt::Display for Section {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, ".{}", self.name)?;
+        writeln!(f, ".section .{}", self.name)?;
 
         if !self.body.is_empty() {
-            write!(f, "\t")?;
-            for (index, line) in self.body.iter().enumerate() {
-                if index > 0 {
-                    write!(f, ", ")?;
-                }
-                write!(f, "{}", line)?;
+            for (_, line) in self.body.iter().enumerate() {
+                write!(f, "{}\n", line)?;
             }
         }
 
@@ -253,21 +290,32 @@ impl Section {
     }
 }
 
+macro_rules! datastring {
+    ($label:expr, $data:expr) => {
+        vec![
+            AsmExpr::Label(Label::hashed($label)),
+            AsmExpr::Data(Data::Bytes($data.as_bytes().to_vec())),
+            AsmExpr::Label(Label::hashed(&format!("S_{}", $label))),
+            AsmExpr::Data(Data::USize($data.as_bytes().len()))
+        ]
+    };
+}
+
 // Example usage:
 fn main() {
-    let hello_world_text = "こんにちは世界";
+    let globals = vec![Global::new("_start")];
 
-    let globals = vec![
-        Global::new("_start")
-    ];
-
-    let data = HashMap::from([
-        ("helloWorldMessage", hello_world_text.as_bytes()),
-    ]);
+    let section_data = Section::new(
+        "data",
+        vec![
+            AsmExpr::Block(datastring!("helloWorldStr", "Hello, world!"))
+        ],
+    );
 
     let section_text = Section::new(
         "text",
         vec![
+            AsmExpr::Label(Label::plain("_start")),
             AsmExpr::Instruction(Amd64Instruction::new(
                 "mov",
                 vec![
@@ -284,31 +332,22 @@ fn main() {
             )),
             //leaq 4(L_8b785f225f7f0d83)(%rip), %rdi
             AsmExpr::Instruction(Amd64Instruction::new(
-                "mov",
+                "lea",
                 vec![
-                    Amd64Operand::Immediate(ImmediateValue::Label(Label::hashed("helloWorldMessage"))),
-                    Amd64Operand::Register(Amd64Register::Special(SpecialRegister::RSI)),
-                ],
-            )),
-    
-            AsmExpr::Instruction(Amd64Instruction::new(
-                "add",
-                vec![
-                    Amd64Operand::Immediate(ImmediateValue::U64(8)),
+                    Amd64Operand::Immediate(ImmediateValue::Label(Label::hashed(
+                        "helloWorldStr",
+                    ))),
                     Amd64Operand::Register(Amd64Register::Special(SpecialRegister::RSI)),
                 ],
             )),
             AsmExpr::Instruction(Amd64Instruction::new(
                 "mov",
                 vec![
-                    Amd64Operand::Immediate(ImmediateValue::USize(
-                        data.get("helloWorldMessage").unwrap().len(),
-                    )),
+                    Amd64Operand::Immediate(ImmediateValue::Label(Label::hashed("S_helloWorldStr"))),
                     Amd64Operand::Register(Amd64Register::Special(SpecialRegister::RDX)),
                 ],
             )),
             AsmExpr::Instruction(Amd64Instruction::new("syscall", vec![])),
-
             AsmExpr::Instruction(Amd64Instruction::new(
                 "mov",
                 vec![
@@ -324,24 +363,12 @@ fn main() {
                 ],
             )),
             AsmExpr::Instruction(Amd64Instruction::new("syscall", vec![])),
-        ]
+        ],
     );
 
     for global in globals {
         println!("{}", global);
     }
-
-    println!("{}", Label::plain("_start:"));
-
-    for instruction in section_text.body {
-        println!("\t{}", instruction);
-    }
-
-    println!();
-
-    for pair in data {
-        println!("{}:", Label::hashed(pair.0).label);
-        println!("\t.quad {}", ImmediateValue::USize(pair.1.len()));
-        println!("\t.byte {}", ImmediateValue::Bytes(pair.1));
-    }
+    println!("{}", section_text);
+    println!("{}", section_data);
 }
