@@ -47,13 +47,13 @@ impl fmt::Display for Label {
 
 impl fmt::Display for Global {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, ".global {}", self.value)
+        write!(f, "global {}", self.value)
     }
 }
 
 struct Amd64Instruction {
     mnemonic: String,
-    operands: Vec<Amd64Operand>,
+    operands: Vec<Operand>,
 }
 
 enum ImmediateValue {
@@ -67,19 +67,25 @@ enum ImmediateValue {
 impl fmt::Display for ImmediateValue {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            ImmediateValue::U64(n) => write!(f, "${}", n),
-            ImmediateValue::I64(n) => write!(f, "${}", n),
-            ImmediateValue::USize(n) => write!(f, "${}", n),
+            ImmediateValue::U64(n) => write!(f, "{}", n),
+            ImmediateValue::I64(n) => write!(f, "{}", n),
+            ImmediateValue::USize(n) => write!(f, "{}", n),
             ImmediateValue::Label(s) => {
                 write!(f, "{}", s.label)
             }
             ImmediateValue::Bytes(b) => {
-                let formatted_bytes: String = b
-                    .iter()
-                    .map(|&byte| format!("0x{:02X}", byte))
-                    .collect::<Vec<String>>()
-                    .join(", ");
-                write!(f, "{}", formatted_bytes)
+                
+                for (i, &byte) in b.iter().enumerate() {
+                    let formatted_byte = format!("0x{:02X}", byte);
+                
+                    if i == b.len() - 1 {
+                        write!(f, "{}", formatted_byte).unwrap();
+                    } else {
+                        write!(f, "{}, ", formatted_byte).unwrap();
+                    }
+                }
+
+                Ok(())
             }
         }
     }
@@ -87,26 +93,32 @@ impl fmt::Display for ImmediateValue {
 
 struct LabelOffset {
     label: Label,
-    rel: Amd64Register
+    rel: Option<Amd64Register>,
 }
 
-enum Amd64Operand {
+enum Operand {
     Register(Amd64Register),
     Immediate(ImmediateValue),
     DataRef(LabelOffset),
 }
 
-impl fmt::Display for Amd64Operand {
+impl fmt::Display for Operand {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Amd64Operand::Register(reg) => write!(f, "{}", reg),
-            Amd64Operand::Immediate(imm) => write!(f, "{}", imm),
-            Amd64Operand::DataRef(r) => write!(f, "{}({})", r.label.label, r.rel),
+            Operand::Register(reg) => write!(f, "{}", reg),
+            Operand::Immediate(imm) => write!(f, "{}", imm),
+            Operand::DataRef(r) => {
+                match &r.rel {
+                    None => write!(f, "[rel {}]", r.label.label),
+                    Some(v) => write!(f, "[{} + {}]", v, r.label.label),
+                }
+                
+            }
         }
     }
 }
 
-enum SpecialRegister {
+enum Amd64SpecialRegister {
     RAX,
     RBX,
     RCX,
@@ -116,23 +128,23 @@ enum SpecialRegister {
     RIP,
 }
 
-impl fmt::Display for SpecialRegister {
+impl fmt::Display for Amd64SpecialRegister {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            SpecialRegister::RAX => write!(f, "{}", "%rax"),
-            SpecialRegister::RBX => write!(f, "{}", "%rbx"),
-            SpecialRegister::RCX => write!(f, "{}", "%rcx"),
-            SpecialRegister::RDX => write!(f, "{}", "%rdx"),
-            SpecialRegister::RDI => write!(f, "{}", "%rdi"),
-            SpecialRegister::RSI => write!(f, "{}", "%rsi"),
-            SpecialRegister::RIP => write!(f, "{}", "%rip"),
+            Amd64SpecialRegister::RAX => write!(f, "{}", "rax"),
+            Amd64SpecialRegister::RBX => write!(f, "{}", "rbx"),
+            Amd64SpecialRegister::RCX => write!(f, "{}", "rcx"),
+            Amd64SpecialRegister::RDX => write!(f, "{}", "rdx"),
+            Amd64SpecialRegister::RDI => write!(f, "{}", "rdi"),
+            Amd64SpecialRegister::RSI => write!(f, "{}", "rsi"),
+            Amd64SpecialRegister::RIP => write!(f, "{}", "rip"),
         }
     }
 }
 
 enum Amd64Register {
     GeneralPurpose(u32),
-    Special(SpecialRegister), // Add more register types as needed (e.g., SIMD, FP, etc.)
+    Special(Amd64SpecialRegister), // Add more register types as needed (e.g., SIMD, FP, etc.)
 }
 
 impl fmt::Display for Amd64Register {
@@ -189,7 +201,7 @@ impl fmt::Display for Amd64MemoryAccess {
 }
 
 impl Amd64Instruction {
-    fn new(mnemonic: &str, operands: Vec<Amd64Operand>) -> Self {
+    fn new(mnemonic: &str, operands: Vec<Operand>) -> Self {
         Amd64Instruction {
             mnemonic: mnemonic.to_string(),
             operands,
@@ -220,7 +232,7 @@ enum Data {
     UInt(u64),
     USize(usize),
     Float(f64),
-    Bytes(Vec<u8>)
+    Bytes(Vec<u8>),
 }
 
 enum AsmExpr {
@@ -234,22 +246,21 @@ enum AsmExpr {
 impl fmt::Display for Data {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Data::Float(v) => write!(f, ".quad {}", v),
-            Data::Int(v) => write!(f, ".quad {}", v),
-            Data::UInt(v) => write!(f, ".quad {}", v),
-            Data::USize(v) => write!(f, ".quad {}", v),
+            Data::Float(v) => write!(f, "dq {}", v),
+            Data::Int(v) => write!(f, "dq {}", v),
+            Data::UInt(v) => write!(f, "dq {}", v),
+            Data::USize(v) => write!(f, "dq {}", v),
             Data::Bytes(v) => {
                 let formatted_bytes = v
                     .iter()
                     .map(|&byte| format!("0x{:02X}", byte))
                     .collect::<Vec<String>>()
                     .join(", ");
-                write!(f, ".byte {}", formatted_bytes)
-            },
+                write!(f, "db {}", formatted_bytes)
+            }
         }
     }
 }
-
 
 impl fmt::Display for AsmExpr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -274,7 +285,7 @@ struct Section {
 
 impl fmt::Display for Section {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, ".section .{}", self.name)?;
+        writeln!(f, "section .{}", self.name)?;
 
         if !self.body.is_empty() {
             for (_, line) in self.body.iter().enumerate() {
@@ -300,8 +311,7 @@ macro_rules! datastring {
         vec![
             AsmExpr::Label(Label::hashed($label)),
             AsmExpr::Data(Data::Bytes($data.as_bytes().to_vec())),
-            AsmExpr::Label(Label::hashed(&format!("S_{}", $label))),
-            AsmExpr::Data(Data::USize($data.as_bytes().len()))
+            AsmExpr::Raw(format!("\t{} equ $ - {}", Label::hashed(&format!("S_{}", $label)).label, Label::hashed($label).label)),
         ]
     };
 }
@@ -313,7 +323,7 @@ fn main() {
     let section_data = Section::new(
         "data",
         vec![
-            AsmExpr::Block(datastring!("helloWorldStr", "Hello, world!"))
+            AsmExpr::Block(datastring!("helloWorldStr", "This is a test of my macroassembler"))
         ],
     );
 
@@ -324,48 +334,47 @@ fn main() {
             AsmExpr::Instruction(Amd64Instruction::new(
                 "mov",
                 vec![
-                    Amd64Operand::Immediate(ImmediateValue::I64(1)),
-                    Amd64Operand::Register(Amd64Register::Special(SpecialRegister::RAX)),
+                    Operand::Register(Amd64Register::Special(Amd64SpecialRegister::RAX)),
+                    Operand::Immediate(ImmediateValue::I64(1)),
                 ],
             )),
             AsmExpr::Instruction(Amd64Instruction::new(
                 "mov",
                 vec![
-                    Amd64Operand::Immediate(ImmediateValue::I64(1)),
-                    Amd64Operand::Register(Amd64Register::Special(SpecialRegister::RDI)),
+                    Operand::Register(Amd64Register::Special(Amd64SpecialRegister::RDI)),
+                    Operand::Immediate(ImmediateValue::I64(1)),
                 ],
             )),
-            //leaq 4(L_8b785f225f7f0d83)(%rip), %rdi
             AsmExpr::Instruction(Amd64Instruction::new(
                 "lea",
                 vec![
-                    Amd64Operand::DataRef(LabelOffset { 
+                    Operand::Register(Amd64Register::Special(Amd64SpecialRegister::RSI)),
+                    Operand::DataRef(LabelOffset {
                         label: Label::hashed("helloWorldStr"),
-                        rel: Amd64Register::Special(SpecialRegister::RIP)
-                    }),
-                    Amd64Operand::Register(Amd64Register::Special(SpecialRegister::RSI))
+                        rel: None
+                    })
                 ],
             )),
             AsmExpr::Instruction(Amd64Instruction::new(
                 "mov",
                 vec![
-                    Amd64Operand::Immediate(ImmediateValue::Label(Label::hashed("S_helloWorldStr"))),
-                    Amd64Operand::Register(Amd64Register::Special(SpecialRegister::RDX)),
+                    Operand::Register(Amd64Register::Special(Amd64SpecialRegister::RDX)),
+                    Operand::Immediate(ImmediateValue::Label(Label::hashed("S_helloWorldStr"))),
                 ],
             )),
             AsmExpr::Instruction(Amd64Instruction::new("syscall", vec![])),
             AsmExpr::Instruction(Amd64Instruction::new(
                 "mov",
                 vec![
-                    Amd64Operand::Immediate(ImmediateValue::I64(60)),
-                    Amd64Operand::Register(Amd64Register::Special(SpecialRegister::RAX)),
+                    Operand::Register(Amd64Register::Special(Amd64SpecialRegister::RAX)),
+                    Operand::Immediate(ImmediateValue::I64(60)),
                 ],
             )),
             AsmExpr::Instruction(Amd64Instruction::new(
                 "xor",
                 vec![
-                    Amd64Operand::Register(Amd64Register::Special(SpecialRegister::RDI)),
-                    Amd64Operand::Register(Amd64Register::Special(SpecialRegister::RDI)),
+                    Operand::Register(Amd64Register::Special(Amd64SpecialRegister::RDI)),
+                    Operand::Register(Amd64Register::Special(Amd64SpecialRegister::RDI)),
                 ],
             )),
             AsmExpr::Instruction(Amd64Instruction::new("syscall", vec![])),
